@@ -1,0 +1,75 @@
+graph TB
+    subgraph "Consumer Application"
+        APP[Application Code]
+    end
+
+    subgraph "digital.vasic.vectordb"
+        subgraph "pkg/client"
+            VS[VectorStore<br/>interface]
+            CM[CollectionManager<br/>interface]
+            VT[Vector]
+            SR[SearchResult]
+            SQ[SearchQuery]
+            CC[CollectionConfig]
+            DM[DistanceMetric]
+        end
+
+        subgraph "pkg/qdrant"
+            QC[qdrant.Client]
+            QCfg[qdrant.Config]
+        end
+
+        subgraph "pkg/pinecone"
+            PC[pinecone.Client]
+            PCfg[pinecone.Config]
+        end
+
+        subgraph "pkg/milvus"
+            MC[milvus.Client]
+            MCfg[milvus.Config]
+        end
+
+        subgraph "pkg/pgvector"
+            PGC[pgvector.Client]
+            PGCfg[pgvector.Config]
+            DBP[DBPool<br/>interface]
+            ROW[Row<br/>interface]
+        end
+    end
+
+    subgraph "External Services"
+        QDRANT_SVC[Qdrant Server<br/>REST API :6333]
+        PINE_SVC[Pinecone<br/>Managed Service]
+        MILVUS_SVC[Milvus Server<br/>REST API v2 :19530]
+        PG_SVC[PostgreSQL<br/>+ pgvector :5432]
+    end
+
+    APP --> VS
+    APP --> CM
+
+    QC -.implements.-> VS
+    QC -.implements.-> CM
+    PC -.implements.-> VS
+    PC -.implements.-> CM
+    MC -.implements.-> VS
+    MC -.implements.-> CM
+    PGC -.implements.-> VS
+    PGC -.implements.-> CM
+
+    QC --> QCfg
+    PC --> PCfg
+    MC --> MCfg
+    PGC --> PGCfg
+    PGC --> DBP
+    DBP --> ROW
+
+    QC --HTTP/HTTPS--> QDRANT_SVC
+    PC --HTTPS--> PINE_SVC
+    MC --HTTP/HTTPS--> MILVUS_SVC
+    PGC --SQL--> PG_SVC
+
+    VS --> VT
+    VS --> SR
+    VS --> SQ
+    CM --> CC
+    CC --> DM

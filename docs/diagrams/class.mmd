@@ -1,0 +1,195 @@
+classDiagram
+    class VectorStore {
+        <<interface>>
+        +Connect(ctx context.Context) error
+        +Close() error
+        +Upsert(ctx context.Context, collection string, vectors []Vector) error
+        +Search(ctx context.Context, collection string, query SearchQuery) ([]SearchResult, error)
+        +Delete(ctx context.Context, collection string, ids []string) error
+        +Get(ctx context.Context, collection string, ids []string) ([]Vector, error)
+    }
+
+    class CollectionManager {
+        <<interface>>
+        +CreateCollection(ctx context.Context, config CollectionConfig) error
+        +DeleteCollection(ctx context.Context, name string) error
+        +ListCollections(ctx context.Context) ([]string, error)
+    }
+
+    class Vector {
+        +ID string
+        +Values []float32
+        +Metadata map[string]any
+        +Validate() error
+    }
+
+    class SearchResult {
+        +ID string
+        +Score float32
+        +Vector []float32
+        +Metadata map[string]any
+    }
+
+    class SearchQuery {
+        +Vector []float32
+        +TopK int
+        +Filter map[string]any
+        +MinScore float64
+        +Validate() error
+    }
+
+    class CollectionConfig {
+        +Name string
+        +Dimension int
+        +Metric DistanceMetric
+        +Validate() error
+    }
+
+    class DistanceMetric {
+        <<type string>>
+        DistanceCosine = "cosine"
+        DistanceDotProduct = "dot_product"
+        DistanceEuclidean = "euclidean"
+    }
+
+    class QdrantConfig {
+        +Host string
+        +HTTPPort int
+        +GRPCPort int
+        +APIKey string
+        +TLS bool
+        +Timeout time.Duration
+        +DefaultDistance DistanceMetric
+        +Validate() error
+        +GetHTTPURL() string
+        +GetGRPCAddress() string
+    }
+
+    class QdrantClient {
+        -config *Config
+        -httpClient *http.Client
+        -mu sync.RWMutex
+        -connected bool
+        +Connect(ctx) error
+        +Close() error
+        +Upsert(ctx, collection, vectors) error
+        +Search(ctx, collection, query) ([]SearchResult, error)
+        +Delete(ctx, collection, ids) error
+        +Get(ctx, collection, ids) ([]Vector, error)
+        +CreateCollection(ctx, config) error
+        +DeleteCollection(ctx, name) error
+        +ListCollections(ctx) ([]string, error)
+    }
+
+    class PineconeConfig {
+        +APIKey string
+        +Environment string
+        +IndexHost string
+        +Timeout time.Duration
+        +Validate() error
+    }
+
+    class PineconeClient {
+        -config *Config
+        -httpClient *http.Client
+        -mu sync.RWMutex
+        -connected bool
+        +Connect(ctx) error
+        +Close() error
+        +Upsert(ctx, collection, vectors) error
+        +Search(ctx, collection, query) ([]SearchResult, error)
+        +Delete(ctx, collection, ids) error
+        +Get(ctx, collection, ids) ([]Vector, error)
+        +CreateCollection(ctx, config) error
+        +DeleteCollection(ctx, name) error
+        +ListCollections(ctx) ([]string, error)
+    }
+
+    class MilvusConfig {
+        +Host string
+        +Port int
+        +Username string
+        +Password string
+        +DBName string
+        +Secure bool
+        +Token string
+        +Timeout time.Duration
+        +Validate() error
+        +GetBaseURL() string
+    }
+
+    class MilvusClient {
+        -config *Config
+        -httpClient *http.Client
+        -mu sync.RWMutex
+        -connected bool
+        +Connect(ctx) error
+        +Close() error
+        +Upsert(ctx, collection, vectors) error
+        +Search(ctx, collection, query) ([]SearchResult, error)
+        +Delete(ctx, collection, ids) error
+        +Get(ctx, collection, ids) ([]Vector, error)
+        +CreateCollection(ctx, config) error
+        +DeleteCollection(ctx, name) error
+        +ListCollections(ctx) ([]string, error)
+    }
+
+    class PgvectorConfig {
+        +ConnectionString string
+        +TablePrefix string
+        +Timeout time.Duration
+        +Validate() error
+    }
+
+    class DBPool {
+        <<interface>>
+        +Ping(ctx context.Context) error
+        +Exec(ctx context.Context, sql string, args ...any) error
+        +QueryRow(ctx context.Context, sql string, args ...any) Row
+        +Close()
+    }
+
+    class Row {
+        <<interface>>
+        +Scan(dest ...any) error
+    }
+
+    class PgvectorClient {
+        -config *Config
+        -pool DBPool
+        -mu sync.RWMutex
+        -connected bool
+        +SetPool(pool DBPool)
+        +Connect(ctx) error
+        +Close() error
+        +Upsert(ctx, collection, vectors) error
+        +Search(ctx, collection, query) ([]SearchResult, error)
+        +Delete(ctx, collection, ids) error
+        +Get(ctx, collection, ids) ([]Vector, error)
+        +CreateCollection(ctx, config) error
+        +DeleteCollection(ctx, name) error
+        +ListCollections(ctx) ([]string, error)
+    }
+
+    VectorStore <|.. QdrantClient : implements
+    VectorStore <|.. PineconeClient : implements
+    VectorStore <|.. MilvusClient : implements
+    VectorStore <|.. PgvectorClient : implements
+
+    CollectionManager <|.. QdrantClient : implements
+    CollectionManager <|.. PineconeClient : implements
+    CollectionManager <|.. MilvusClient : implements
+    CollectionManager <|.. PgvectorClient : implements
+
+    VectorStore --> Vector : uses
+    VectorStore --> SearchResult : returns
+    VectorStore --> SearchQuery : accepts
+    CollectionManager --> CollectionConfig : accepts
+    CollectionConfig --> DistanceMetric : uses
+
+    QdrantClient --> QdrantConfig : has
+    PineconeClient --> PineconeConfig : has
+    MilvusClient --> MilvusConfig : has
+    PgvectorClient --> PgvectorConfig : has
+    PgvectorClient --> DBPool : uses
+    DBPool --> Row : returns

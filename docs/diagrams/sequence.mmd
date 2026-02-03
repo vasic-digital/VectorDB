@@ -1,0 +1,86 @@
+sequenceDiagram
+    participant App as Application
+    participant Store as VectorStore
+    participant Client as Backend Client<br/>(e.g., qdrant.Client)
+    participant Backend as Vector Database<br/>(e.g., Qdrant Server)
+
+    Note over App,Backend: Connection Phase
+
+    App->>Store: NewClient(config)
+    Store-->>App: *Client, nil
+
+    App->>Store: Connect(ctx)
+    Store->>Client: mu.Lock()
+    Client->>Backend: Health check request
+    Backend-->>Client: 200 OK
+    Client->>Client: connected = true
+    Store->>Client: mu.Unlock()
+    Store-->>App: nil
+
+    Note over App,Backend: Collection Setup
+
+    App->>Store: CreateCollection(ctx, config)
+    Store->>Client: mu.RLock()
+    Client->>Client: Check connected == true
+    Client->>Client: config.Validate()
+    Client->>Backend: Create collection request
+    Backend-->>Client: Success response
+    Store->>Client: mu.RUnlock()
+    Store-->>App: nil
+
+    Note over App,Backend: Upsert Phase
+
+    App->>Store: Upsert(ctx, collection, vectors)
+    Store->>Client: mu.RLock()
+    Client->>Client: Check connected == true
+    Client->>Client: Check vectors not empty
+    Client->>Client: Auto-generate UUIDs for empty IDs
+    Client->>Backend: Upsert request (JSON)
+    Backend-->>Client: Success response
+    Store->>Client: mu.RUnlock()
+    Store-->>App: nil
+
+    Note over App,Backend: Search Phase
+
+    App->>Store: Search(ctx, collection, query)
+    Store->>Client: mu.RLock()
+    Client->>Client: Check connected == true
+    Client->>Backend: Search request (vector, topK, filter)
+    Backend-->>Client: Results (id, score, metadata)
+    Client->>Client: Parse response
+    Client->>Client: Apply MinScore filter (if needed)
+    Client->>Client: Map to []SearchResult
+    Store->>Client: mu.RUnlock()
+    Store-->>App: []SearchResult, nil
+
+    Note over App,Backend: Retrieval Phase
+
+    App->>Store: Get(ctx, collection, ids)
+    Store->>Client: mu.RLock()
+    Client->>Client: Check connected == true
+    Client->>Client: Check ids not empty
+    Client->>Backend: Get by IDs request
+    Backend-->>Client: Vectors with metadata
+    Client->>Client: Map to []Vector
+    Store->>Client: mu.RUnlock()
+    Store-->>App: []Vector, nil
+
+    Note over App,Backend: Deletion Phase
+
+    App->>Store: Delete(ctx, collection, ids)
+    Store->>Client: mu.RLock()
+    Client->>Client: Check connected == true
+    Client->>Client: Check ids not empty
+    Client->>Backend: Delete request
+    Backend-->>Client: Success response
+    Store->>Client: mu.RUnlock()
+    Store-->>App: nil
+
+    Note over App,Backend: Cleanup Phase
+
+    App->>Store: Close()
+    Store->>Client: mu.Lock()
+    Client->>Client: connected = false
+    Client->>Client: Release resources
+    Store->>Client: mu.Unlock()
+    Store-->>App: nil
