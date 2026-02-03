@@ -615,3 +615,534 @@ func TestClient_APIError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API error 100")
 }
+
+// =========================================================================
+// Connection Retry and Edge Cases Tests
+// =========================================================================
+
+func TestClient_Connect_WithBasicAuth(t *testing.T) {
+	var receivedAuth string
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			receivedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+		},
+	))
+	defer server.Close()
+
+	host, port := parseServerURL(t, server.URL)
+	config := &Config{
+		Host:     host,
+		Port:     port,
+		DBName:   "default",
+		Username: "admin",
+		Password: "secret",
+		Timeout:  5 * time.Second,
+	}
+	c, err := NewClient(config)
+	require.NoError(t, err)
+	err = c.Connect(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, receivedAuth, "Basic")
+}
+
+func TestClient_Connect_ContextCanceled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(100 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+		},
+	))
+	defer server.Close()
+
+	c := createTestClient(t, server)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+	err := c.Connect(ctx)
+	require.Error(t, err)
+}
+
+// =========================================================================
+// Search with Filters Edge Cases Tests
+// =========================================================================
+
+func TestClient_Search_WithFilter(t *testing.T) {
+	var receivedFilter string
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			var reqData map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&reqData)
+			if f, ok := reqData["filter"].(string); ok {
+				receivedFilter = f
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": [][]map[string]any{
+					{{"id": "v1", "distance": 0.1}},
+				},
+			})
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1, 0.2},
+		TopK:   10,
+		Filter: map[string]any{"filter": "category == 'tech'"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "category == 'tech'", receivedFilter)
+}
+
+func TestClient_Search_WithMinScore(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": [][]map[string]any{
+					{
+						{"id": "v1", "distance": 0.1}, // score = 0.9
+						{"id": "v2", "distance": 0.3}, // score = 0.7
+						{"id": "v3", "distance": 0.8}, // score = 0.2 (filtered)
+					},
+				},
+			})
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	results, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector:   []float32{0.1, 0.2},
+		TopK:     10,
+		MinScore: 0.5, // Only v1 and v2 should pass
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+	assert.Equal(t, "v1", results[0].ID)
+	assert.Equal(t, "v2", results[1].ID)
+}
+
+func TestClient_Search_DefaultTopK(t *testing.T) {
+	var receivedLimit float64
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			var reqData map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&reqData)
+			if l, ok := reqData["limit"].(float64); ok {
+				receivedLimit = l
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": [][]map[string]any{},
+			})
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1, 0.2},
+		TopK:   0, // Should default to 10
+	})
+	require.NoError(t, err)
+	assert.Equal(t, float64(10), receivedLimit)
+}
+
+func TestClient_Search_ParseResponseError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("invalid json"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1, 0.2},
+		TopK:   10,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse response")
+}
+
+// =========================================================================
+// Upsert with Metadata Tests
+// =========================================================================
+
+func TestClient_Upsert_WithMetadata(t *testing.T) {
+	var reqData map[string]any
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			_ = json.NewDecoder(r.Body).Decode(&reqData)
+			_ = json.NewEncoder(w).Encode(milvusOK(map[string]any{
+				"insertCount": 1,
+			}))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{
+			ID:     "v1",
+			Values: []float32{0.1, 0.2},
+			Metadata: map[string]any{
+				"category": "tech",
+				"score":    42,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	data := reqData["data"].([]any)
+	entry := data[0].(map[string]any)
+	assert.Equal(t, "tech", entry["category"])
+	assert.Equal(t, float64(42), entry["score"])
+}
+
+func TestClient_Upsert_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("internal error"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{ID: "v1", Values: []float32{0.1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to insert entities")
+}
+
+// =========================================================================
+// Delete Error Tests
+// =========================================================================
+
+func TestClient_Delete_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("internal error"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	err := c.Delete(context.Background(), "test", []string{"v1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete entities")
+}
+
+// =========================================================================
+// Get with Vector Values Tests
+// =========================================================================
+
+func TestClient_Get_WithVectorValues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": []map[string]any{
+					{
+						"id":       "v1",
+						"vector":   []any{0.1, 0.2, 0.3},
+						"category": "tech",
+					},
+				},
+			})
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	vectors, err := c.Get(context.Background(), "test", []string{"v1"})
+	require.NoError(t, err)
+	require.Len(t, vectors, 1)
+	assert.Equal(t, "v1", vectors[0].ID)
+	assert.Len(t, vectors[0].Values, 3)
+	assert.InDelta(t, 0.1, vectors[0].Values[0], 0.001)
+	assert.Equal(t, "tech", vectors[0].Metadata["category"])
+}
+
+func TestClient_Get_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("internal error"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	_, err := c.Get(context.Background(), "test", []string{"v1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get entities")
+}
+
+func TestClient_Get_ParseError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("invalid json"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	_, err := c.Get(context.Background(), "test", []string{"v1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse response")
+}
+
+// =========================================================================
+// Collection Management Error Tests
+// =========================================================================
+
+func TestClient_CreateCollection_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("internal error"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	err := c.CreateCollection(context.Background(), client.CollectionConfig{
+		Name:      "test_coll",
+		Dimension: 768,
+		Metric:    client.DistanceCosine,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create collection")
+}
+
+func TestClient_DeleteCollection_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("internal error"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	err := c.DeleteCollection(context.Background(), "test_coll")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to drop collection")
+}
+
+func TestClient_ListCollections_ParseError(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			if callCount == 1 {
+				// First call (Connect)
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			// Second call (ListCollections) - return invalid JSON
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("invalid json"))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	_, err := c.ListCollections(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse response")
+}
+
+// =========================================================================
+// doRequest Edge Cases Tests
+// =========================================================================
+
+func TestClient_doRequest_ReadBodyError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			// Set content length but don't write full body to trigger read error
+			w.Header().Set("Content-Length", "1000")
+			_, _ = w.Write([]byte("short"))
+			// Connection will be closed, causing read error
+		},
+	))
+	defer server.Close()
+
+	c := createTestClient(t, server)
+	// This should fail due to body read error
+	err := c.Connect(context.Background())
+	require.Error(t, err)
+}
+
+func TestConfig_NegativePort(t *testing.T) {
+	config := &Config{Host: "localhost", Port: -1}
+	err := config.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid port")
+}
+
+// =========================================================================
+// Additional doRequest Edge Cases Tests for 100% Coverage
+// =========================================================================
+
+func TestClient_doRequest_NilBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	// Directly call listCollections which passes nil body internally
+	names, err := c.ListCollections(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, names)
+}
+
+func TestClient_doRequest_StatusError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error": "bad request"}`))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{ID: "v1", Values: []float32{0.1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "400")
+}
+
+func TestClient_ListCollections_ServerError(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			if callCount == 1 {
+				// First call (Connect) succeeds
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			// Second call (ListCollections) fails
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error": "server error"}`))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	_, err := c.ListCollections(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list collections")
+}
+
+func TestClient_doRequest_CreateRequestError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+	// Modify config to have invalid URL with control characters
+	c.config.Host = "invalid\x00host"
+
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{ID: "v1", Values: []float32{0.1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create request")
+}
+
+func TestClient_doRequest_MarshalError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/collections/list") {
+				_ = json.NewEncoder(w).Encode(milvusOK([]string{}))
+				return
+			}
+			t.Error("should not reach server with unmarshalable body")
+		},
+	))
+	defer server.Close()
+
+	c := createConnectedClient(t, server)
+
+	// Create a channel which cannot be marshaled to JSON
+	ch := make(chan int)
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{
+			ID:       "v1",
+			Values:   []float32{0.1},
+			Metadata: map[string]any{"channel": ch}, // channels cannot be JSON marshaled
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to marshal body")
+}

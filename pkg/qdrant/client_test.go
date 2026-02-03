@@ -902,3 +902,240 @@ func TestMetricToQdrantDistance(t *testing.T) {
 		})
 	}
 }
+
+// =========================================================================
+// Additional Tests for CreateCollection, DeleteCollection, ListCollections
+// =========================================================================
+
+func TestClient_CreateCollection_ServerError(t *testing.T) {
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error": "server error"}`))
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+	err := c.CreateCollection(context.Background(), client.CollectionConfig{
+		Name:      "test",
+		Dimension: 768,
+		Metric:    client.DistanceCosine,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create collection")
+}
+
+func TestClient_DeleteCollection_ServerError(t *testing.T) {
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error": "not found"}`))
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+	err := c.DeleteCollection(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete collection")
+}
+
+func TestClient_ListCollections_ServerError(t *testing.T) {
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error": "server error"}`))
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+	_, err := c.ListCollections(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list collections")
+}
+
+func TestClient_healthCheck_CreateRequestError(t *testing.T) {
+	// Test with invalid URL causing http.NewRequestWithContext to fail
+	config := DefaultConfig()
+	config.Host = "invalid\x00host"
+	config.Timeout = 100 * time.Millisecond
+
+	c, err := NewClient(config)
+	require.NoError(t, err)
+
+	err = c.Connect(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create request")
+}
+
+func TestClient_doRequest_NilBody(t *testing.T) {
+	var receivedBody []byte
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]any{
+				"collections": []any{},
+			},
+		})
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+	// ListCollections calls doRequest with nil body
+	_, err := c.ListCollections(context.Background())
+	require.NoError(t, err)
+	// For nil body requests, no content is sent
+	_ = receivedBody
+}
+
+func TestClient_doRequest_StatusErrorWithBody(t *testing.T) {
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error": "detailed error message"}`))
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1},
+		TopK:   5,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "detailed error message")
+}
+
+func TestClient_doRequest_BodyReadError(t *testing.T) {
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Set content-length but don't write full body
+		w.Header().Set("Content-Length", "1000")
+		_, _ = w.Write([]byte("short"))
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+	_, err := c.ListCollections(context.Background())
+	require.Error(t, err)
+}
+
+func TestClient_doRequest_CreateRequestError(t *testing.T) {
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+	// Modify config to have invalid URL
+	c.config.Host = "invalid\x00host"
+
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{ID: "v1", Values: []float32{0.1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create request")
+}
+
+func TestClient_doRequest_MarshalError(t *testing.T) {
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		t.Error("should not reach server with unmarshalable body")
+	})
+	defer ms.close()
+
+	c := ms.newConnectedClient(t)
+
+	// Create a channel which cannot be marshaled to JSON
+	ch := make(chan int)
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{
+			ID:       "v1",
+			Values:   []float32{0.1},
+			Metadata: map[string]any{"channel": ch}, // channels cannot be JSON marshaled
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to marshal body")
+}
+
+func TestClient_doRequest_HTTPClientError(t *testing.T) {
+	// Create a server but close it immediately to simulate connection error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	urlParts := strings.TrimPrefix(server.URL, "http://")
+	parts := strings.Split(urlParts, ":")
+	host := parts[0]
+	port := 80
+	if len(parts) > 1 {
+		_, _ = fmt.Sscanf(parts[1], "%d", &port)
+	}
+
+	server.Close() // Close immediately to cause connection errors
+
+	config := &Config{
+		Host:     host,
+		HTTPPort: port,
+		GRPCPort: 6334,
+		Timeout:  100 * time.Millisecond,
+	}
+	c, err := NewClient(config)
+	require.NoError(t, err)
+
+	// Manually set connected to bypass the connect check
+	c.mu.Lock()
+	c.connected = true
+	c.mu.Unlock()
+
+	err = c.Upsert(context.Background(), "test", []client.Vector{
+		{ID: "v1", Values: []float32{0.1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "request failed")
+}
+
+func TestClient_doRequest_WithAPIKey(t *testing.T) {
+	var receivedKey string
+	ms := newMockServer(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		receivedKey = r.Header.Get("api-key")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]string{"status": "completed"},
+		})
+	})
+	defer ms.close()
+
+	// Set API key in config before creating client
+	ms.config.APIKey = "test-api-key"
+	c := ms.newConnectedClient(t)
+
+	err := c.Upsert(context.Background(), "test", []client.Vector{
+		{ID: "v1", Values: []float32{0.1}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "test-api-key", receivedKey)
+}

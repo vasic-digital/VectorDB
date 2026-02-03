@@ -1,0 +1,524 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>pinecone: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">digital.vasic.vectordb/pkg/pinecone/client.go (90.6%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Package pinecone provides a vector store adapter for the Pinecone
+// managed vector database service.
+package pinecone
+
+import (
+        "bytes"
+        "context"
+        "encoding/json"
+        "fmt"
+        "io"
+        "net/http"
+        "sync"
+        "time"
+
+        "github.com/google/uuid"
+
+        "digital.vasic.vectordb/pkg/client"
+)
+
+// Config holds Pinecone configuration.
+type Config struct {
+        APIKey      string        `json:"api_key"`
+        Environment string        `json:"environment"`
+        IndexHost   string        `json:"index_host"`
+        Timeout     time.Duration `json:"timeout"`
+}
+
+// DefaultConfig returns a default Pinecone configuration.
+func DefaultConfig() *Config <span class="cov8" title="1">{
+        return &amp;Config{
+                Timeout: 30 * time.Second,
+        }
+}</span>
+
+// Validate validates the configuration.
+func (c *Config) Validate() error <span class="cov8" title="1">{
+        if c.APIKey == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("API key is required")
+        }</span>
+        <span class="cov8" title="1">if c.IndexHost == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("index host is required")
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+
+// Client implements client.VectorStore and client.CollectionManager
+// for the Pinecone vector database. Pinecone uses namespaces rather
+// than collections; collection operations map to namespace operations.
+type Client struct {
+        config     *Config
+        httpClient *http.Client
+        mu         sync.RWMutex
+        connected  bool
+}
+
+// Compile-time interface checks.
+var (
+        _ client.VectorStore       = (*Client)(nil)
+        _ client.CollectionManager = (*Client)(nil)
+)
+
+// NewClient creates a new Pinecone client.
+func NewClient(config *Config) (*Client, error) <span class="cov8" title="1">{
+        if config == nil </span><span class="cov8" title="1">{
+                config = DefaultConfig()
+        }</span>
+        <span class="cov8" title="1">if err := config.Validate(); err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("invalid config: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return &amp;Client{
+                config: config,
+                httpClient: &amp;http.Client{
+                        Timeout: config.Timeout,
+                },
+                connected: false,
+        }, nil</span>
+}
+
+// Connect verifies connectivity to Pinecone.
+func (c *Client) Connect(ctx context.Context) error <span class="cov8" title="1">{
+        c.mu.Lock()
+        defer c.mu.Unlock()
+
+        _, err := c.doRequest(ctx, http.MethodPost, "/describe_index_stats", nil)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("failed to connect to Pinecone: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">c.connected = true
+        return nil</span>
+}
+
+// Close closes the client connection.
+func (c *Client) Close() error <span class="cov8" title="1">{
+        c.mu.Lock()
+        defer c.mu.Unlock()
+        c.connected = false
+        return nil
+}</span>
+
+// Upsert inserts or updates vectors. The collection parameter is used
+// as the Pinecone namespace.
+func (c *Client) Upsert(
+        ctx context.Context,
+        collection string,
+        vectors []client.Vector,
+) error <span class="cov8" title="1">{
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        if !c.connected </span><span class="cov8" title="1">{
+                return client.ErrNotConnected
+        }</span>
+        <span class="cov8" title="1">if len(vectors) == 0 </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">type pineconeVector struct {
+                ID       string         `json:"id"`
+                Values   []float32      `json:"values"`
+                Metadata map[string]any `json:"metadata,omitempty"`
+        }
+
+        pVectors := make([]pineconeVector, len(vectors))
+        for i, v := range vectors </span><span class="cov8" title="1">{
+                id := v.ID
+                if id == "" </span><span class="cov8" title="1">{
+                        id = uuid.New().String()
+                }</span>
+                <span class="cov8" title="1">pVectors[i] = pineconeVector{
+                        ID:       id,
+                        Values:   v.Values,
+                        Metadata: v.Metadata,
+                }</span>
+        }
+
+        <span class="cov8" title="1">reqBody := map[string]any{
+                "vectors":   pVectors,
+                "namespace": collection,
+        }
+
+        _, err := c.doRequest(ctx, http.MethodPost, "/vectors/upsert", reqBody)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to upsert vectors: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// Search performs vector similarity search. The collection parameter
+// is used as the Pinecone namespace.
+func (c *Client) Search(
+        ctx context.Context,
+        collection string,
+        query client.SearchQuery,
+) ([]client.SearchResult, error) <span class="cov8" title="1">{
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        if !c.connected </span><span class="cov8" title="1">{
+                return nil, client.ErrNotConnected
+        }</span>
+
+        <span class="cov8" title="1">topK := query.TopK
+        if topK &lt;= 0 </span><span class="cov0" title="0">{
+                topK = 10
+        }</span>
+
+        <span class="cov8" title="1">reqBody := map[string]any{
+                "vector":          query.Vector,
+                "topK":            topK,
+                "namespace":       collection,
+                "includeMetadata": true,
+                "includeValues":   false,
+        }
+
+        if query.Filter != nil </span><span class="cov0" title="0">{
+                reqBody["filter"] = query.Filter
+        }</span>
+
+        <span class="cov8" title="1">respBody, err := c.doRequest(ctx, http.MethodPost, "/query", reqBody)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">var response struct {
+                Matches []struct {
+                        ID       string         `json:"id"`
+                        Score    float32        `json:"score"`
+                        Values   []float32      `json:"values,omitempty"`
+                        Metadata map[string]any `json:"metadata,omitempty"`
+                } `json:"matches"`
+        }
+
+        if err := json.Unmarshal(respBody, &amp;response); err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("failed to parse response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">results := make([]client.SearchResult, 0, len(response.Matches))
+        for _, m := range response.Matches </span><span class="cov8" title="1">{
+                if query.MinScore &gt; 0 &amp;&amp; float64(m.Score) &lt; query.MinScore </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+                <span class="cov8" title="1">results = append(results, client.SearchResult{
+                        ID:       m.ID,
+                        Score:    m.Score,
+                        Vector:   m.Values,
+                        Metadata: m.Metadata,
+                })</span>
+        }
+
+        <span class="cov8" title="1">return results, nil</span>
+}
+
+// Delete removes vectors by IDs. The collection parameter is used
+// as the Pinecone namespace.
+func (c *Client) Delete(
+        ctx context.Context,
+        collection string,
+        ids []string,
+) error <span class="cov8" title="1">{
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        if !c.connected </span><span class="cov8" title="1">{
+                return client.ErrNotConnected
+        }</span>
+        <span class="cov8" title="1">if len(ids) == 0 </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">reqBody := map[string]any{
+                "ids":       ids,
+                "namespace": collection,
+        }
+
+        _, err := c.doRequest(ctx, http.MethodPost, "/vectors/delete", reqBody)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to delete vectors: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// Get retrieves vectors by IDs. The collection parameter is used
+// as the Pinecone namespace.
+func (c *Client) Get(
+        ctx context.Context,
+        collection string,
+        ids []string,
+) ([]client.Vector, error) <span class="cov8" title="1">{
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        if !c.connected </span><span class="cov8" title="1">{
+                return nil, client.ErrNotConnected
+        }</span>
+        <span class="cov8" title="1">if len(ids) == 0 </span><span class="cov8" title="1">{
+                return []client.Vector{}, nil
+        }</span>
+
+        <span class="cov8" title="1">path := "/vectors/fetch?"
+        for i, id := range ids </span><span class="cov8" title="1">{
+                if i &gt; 0 </span><span class="cov0" title="0">{
+                        path += "&amp;"
+                }</span>
+                <span class="cov8" title="1">path += "ids=" + id</span>
+        }
+        <span class="cov8" title="1">if collection != "" </span><span class="cov8" title="1">{
+                path += "&amp;namespace=" + collection
+        }</span>
+
+        <span class="cov8" title="1">respBody, err := c.doRequest(ctx, http.MethodGet, path, nil)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to fetch vectors: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">var response struct {
+                Vectors map[string]struct {
+                        ID       string         `json:"id"`
+                        Values   []float32      `json:"values"`
+                        Metadata map[string]any `json:"metadata,omitempty"`
+                } `json:"vectors"`
+        }
+
+        if err := json.Unmarshal(respBody, &amp;response); err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("failed to parse response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">vectors := make([]client.Vector, 0, len(response.Vectors))
+        for _, v := range response.Vectors </span><span class="cov8" title="1">{
+                vectors = append(vectors, client.Vector{
+                        ID:       v.ID,
+                        Values:   v.Values,
+                        Metadata: v.Metadata,
+                })
+        }</span>
+
+        <span class="cov8" title="1">return vectors, nil</span>
+}
+
+// CreateCollection is a no-op for Pinecone since collections (namespaces)
+// are created implicitly on first upsert.
+func (c *Client) CreateCollection(
+        ctx context.Context,
+        config client.CollectionConfig,
+) error <span class="cov8" title="1">{
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        if !c.connected </span><span class="cov8" title="1">{
+                return client.ErrNotConnected
+        }</span>
+        <span class="cov8" title="1">if err := config.Validate(); err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("invalid collection config: %w", err)
+        }</span>
+        // Pinecone namespaces are created implicitly.
+        <span class="cov8" title="1">return nil</span>
+}
+
+// DeleteCollection deletes all vectors in a namespace.
+func (c *Client) DeleteCollection(ctx context.Context, name string) error <span class="cov8" title="1">{
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        if !c.connected </span><span class="cov8" title="1">{
+                return client.ErrNotConnected
+        }</span>
+
+        <span class="cov8" title="1">reqBody := map[string]any{
+                "deleteAll": true,
+                "namespace": name,
+        }
+
+        _, err := c.doRequest(ctx, http.MethodPost, "/vectors/delete", reqBody)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to delete namespace: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// ListCollections returns all namespaces in the index.
+func (c *Client) ListCollections(ctx context.Context) ([]string, error) <span class="cov8" title="1">{
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        if !c.connected </span><span class="cov8" title="1">{
+                return nil, client.ErrNotConnected
+        }</span>
+
+        <span class="cov8" title="1">respBody, err := c.doRequest(
+                ctx, http.MethodPost, "/describe_index_stats", nil,
+        )
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to list namespaces: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">var response struct {
+                Namespaces map[string]struct {
+                        VectorCount int64 `json:"vectorCount"`
+                } `json:"namespaces"`
+        }
+
+        if err := json.Unmarshal(respBody, &amp;response); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to parse response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">names := make([]string, 0, len(response.Namespaces))
+        for ns := range response.Namespaces </span><span class="cov8" title="1">{
+                names = append(names, ns)
+        }</span>
+
+        <span class="cov8" title="1">return names, nil</span>
+}
+
+func (c *Client) doRequest(
+        ctx context.Context,
+        method, path string,
+        body any,
+) ([]byte, error) <span class="cov8" title="1">{
+        url := fmt.Sprintf("%s%s", c.config.IndexHost, path)
+
+        var reqBody io.Reader
+        if body != nil </span><span class="cov8" title="1">{
+                jsonBody, err := json.Marshal(body)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to marshal body: %w", err)
+                }</span>
+                <span class="cov8" title="1">reqBody = bytes.NewReader(jsonBody)</span>
+        }
+
+        <span class="cov8" title="1">req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create request: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Api-Key", c.config.APIKey)
+
+        resp, err := c.httpClient.Do(req)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("request failed: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer func() </span><span class="cov8" title="1">{ _ = resp.Body.Close() }</span>()
+
+        <span class="cov8" title="1">respBody, err := io.ReadAll(resp.Body)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to read response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">if resp.StatusCode &gt;= 400 </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf(
+                        "request failed with status %d: %s",
+                        resp.StatusCode, string(respBody),
+                )
+        }</span>
+
+        <span class="cov8" title="1">return respBody, nil</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

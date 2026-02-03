@@ -505,3 +505,49 @@ func TestClient_TableName(t *testing.T) {
 	c, _ := NewClient(config)
 	assert.Equal(t, "vdb_my_collection", c.tableName("my_collection"))
 }
+
+// =========================================================================
+// Additional Tests for Search, Get, ListCollections Coverage
+// =========================================================================
+
+func TestClient_Search_Connected(t *testing.T) {
+	c, _ := newConnectedClient(t)
+	// Search returns error since it requires live DB
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1, 0.2},
+		TopK:   10,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live database connection")
+}
+
+func TestClient_Get_Connected(t *testing.T) {
+	c, _ := newConnectedClient(t)
+	// Get returns error since it requires live DB
+	_, err := c.Get(context.Background(), "test", []string{"v1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live database connection")
+}
+
+func TestClient_ListCollections_Connected(t *testing.T) {
+	c, _ := newConnectedClient(t)
+	// ListCollections returns error since it requires live DB
+	_, err := c.ListCollections(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live database connection")
+}
+
+func TestClient_Upsert_NilMetadata(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.execSQL = nil // reset from connect
+
+	err := c.Upsert(context.Background(), "test_coll", []client.Vector{
+		{
+			ID:       "v1",
+			Values:   []float32{0.1, 0.2},
+			Metadata: nil, // No metadata
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, pool.execSQL, 1)
+}
