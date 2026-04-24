@@ -12,7 +12,7 @@ import (
 
 func TestVector_EmptyValues_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	v := client.Vector{ID: "test", Values: nil}
@@ -26,7 +26,7 @@ func TestVector_EmptyValues_Security(t *testing.T) {
 
 func TestSearchQuery_NilVector_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	q := client.SearchQuery{Vector: nil, TopK: 5}
@@ -36,7 +36,7 @@ func TestSearchQuery_NilVector_Security(t *testing.T) {
 
 func TestSearchQuery_NegativeTopK_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	q := client.SearchQuery{
@@ -49,7 +49,7 @@ func TestSearchQuery_NegativeTopK_Security(t *testing.T) {
 
 func TestCollectionConfig_EmptyName_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	cfg := client.CollectionConfig{Name: "", Dimension: 128}
@@ -59,7 +59,7 @@ func TestCollectionConfig_EmptyName_Security(t *testing.T) {
 
 func TestCollectionConfig_NegativeDimension_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	cfg := client.CollectionConfig{
@@ -73,7 +73,7 @@ func TestCollectionConfig_NegativeDimension_Security(t *testing.T) {
 
 func TestCollectionConfig_InvalidMetric_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	cfg := client.CollectionConfig{
@@ -87,7 +87,7 @@ func TestCollectionConfig_InvalidMetric_Security(t *testing.T) {
 
 func TestQdrantConfig_EmptyHost_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	cfg := &qdrant.Config{
@@ -102,7 +102,7 @@ func TestQdrantConfig_EmptyHost_Security(t *testing.T) {
 
 func TestQdrantConfig_InvalidPorts_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	tests := []struct {
@@ -134,7 +134,7 @@ func TestQdrantConfig_InvalidPorts_Security(t *testing.T) {
 
 func TestQdrantClient_NilConfig_Security(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping security test in short mode")
+		t.Skip("skipping security test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	// Nil config should not panic, should use defaults

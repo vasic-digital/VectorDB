@@ -12,7 +12,7 @@ import (
 
 func TestDistanceMetrics_E2E(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	metrics := []client.DistanceMetric{
@@ -34,7 +34,7 @@ func TestDistanceMetrics_E2E(t *testing.T) {
 
 func TestVectorWithMetadata_E2E(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	v := client.Vector{
@@ -56,7 +56,7 @@ func TestVectorWithMetadata_E2E(t *testing.T) {
 
 func TestSearchQueryWithFilter_E2E(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	query := client.SearchQuery{
@@ -77,7 +77,7 @@ func TestSearchQueryWithFilter_E2E(t *testing.T) {
 
 func TestQdrantClientLifecycle_E2E(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	cfg := &qdrant.Config{
@@ -99,7 +99,7 @@ func TestQdrantClientLifecycle_E2E(t *testing.T) {
 
 func TestQdrantConfigEdgeCases_E2E(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	tests := []struct {
@@ -155,7 +155,7 @@ func TestQdrantConfigEdgeCases_E2E(t *testing.T) {
 
 func TestErrNotConnected_E2E(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	assert.NotNil(t, client.ErrNotConnected)
@@ -164,7 +164,7 @@ func TestErrNotConnected_E2E(t *testing.T) {
 
 func TestCollectionConfigNoMetric_E2E(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	// Empty metric should be valid (defaults are handled by backends)

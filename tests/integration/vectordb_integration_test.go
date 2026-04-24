@@ -11,7 +11,7 @@ import (
 
 func TestVectorValidation_Integration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+		t.Skip("skipping integration test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	tests := []struct {
@@ -50,7 +50,7 @@ func TestVectorValidation_Integration(t *testing.T) {
 
 func TestSearchQueryValidation_Integration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+		t.Skip("skipping integration test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	tests := []struct {
@@ -94,7 +94,7 @@ func TestSearchQueryValidation_Integration(t *testing.T) {
 
 func TestCollectionConfigValidation_Integration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+		t.Skip("skipping integration test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	tests := []struct {
@@ -166,7 +166,7 @@ func TestCollectionConfigValidation_Integration(t *testing.T) {
 
 func TestQdrantConfigValidation_Integration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+		t.Skip("skipping integration test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	defaultCfg := qdrant.DefaultConfig()
@@ -180,7 +180,7 @@ func TestQdrantConfigValidation_Integration(t *testing.T) {
 
 func TestQdrantConfigURLGeneration_Integration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+		t.Skip("skipping integration test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	cfg := &qdrant.Config{
@@ -199,7 +199,7 @@ func TestQdrantConfigURLGeneration_Integration(t *testing.T) {
 
 func TestQdrantClientCreation_Integration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+		t.Skip("skipping integration test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	// Valid config should create client

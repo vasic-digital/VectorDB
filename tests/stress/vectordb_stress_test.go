@@ -15,7 +15,7 @@ import (
 
 func TestVectorValidation_Concurrent_Stress(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
+		t.Skip("skipping stress test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	const goroutines = 100
@@ -44,7 +44,7 @@ func TestVectorValidation_Concurrent_Stress(t *testing.T) {
 
 func TestSearchQueryValidation_Concurrent_Stress(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
+		t.Skip("skipping stress test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	const goroutines = 100
@@ -72,7 +72,7 @@ func TestSearchQueryValidation_Concurrent_Stress(t *testing.T) {
 
 func TestCollectionConfigValidation_Concurrent_Stress(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
+		t.Skip("skipping stress test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	metrics := []client.DistanceMetric{
@@ -103,7 +103,7 @@ func TestCollectionConfigValidation_Concurrent_Stress(t *testing.T) {
 
 func TestQdrantClientCreation_Concurrent_Stress(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
+		t.Skip("skipping stress test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	const goroutines = 50
@@ -131,7 +131,7 @@ func TestQdrantClientCreation_Concurrent_Stress(t *testing.T) {
 
 func TestQdrantConfigGeneration_Concurrent_Stress(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
+		t.Skip("skipping stress test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	const goroutines = 100
@@ -164,7 +164,7 @@ func TestQdrantConfigGeneration_Concurrent_Stress(t *testing.T) {
 
 func TestMassVectorCreation_Stress(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
+		t.Skip("skipping stress test in short mode")  // SKIP-OK: #short-mode
 	}
 
 	const vectorCount = 1000
