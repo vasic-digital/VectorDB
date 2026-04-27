@@ -1,5 +1,22 @@
 # CLAUDE.md - VectorDB Module
 
+
+## Definition of Done
+
+This module inherits HelixAgent's universal Definition of Done — see the root
+`CLAUDE.md` and `docs/development/definition-of-done.md`. In one line: **no
+task is done without pasted output from a real run of the real system in the
+same session as the change.** Coverage and green suites are not evidence.
+
+### Acceptance demo for this module
+
+```bash
+# Upsert + cosine-similarity search against the in-memory vector store
+cd VectorDB && GOMAXPROCS=2 nice -n 19 go test -count=1 -race -v ./tests/integration/...
+```
+Expect: PASS; `client.VectorStore` exercised by the in-memory backend. For real Qdrant/Pinecone/Milvus/pgvector run the respective backend's test build tag per `VectorDB/README.md`.
+
+
 ## Overview
 
 `digital.vasic.vectordb` is a generic, reusable Go module for vector database operations. It provides a unified interface for multiple vector database backends including Qdrant, Pinecone, Milvus, and pgvector (PostgreSQL).
@@ -56,3 +73,12 @@ go test -tags=integration ./...   # Integration tests (requires backends)
 ## Commit Style
 
 Conventional Commits: `feat(qdrant): add batch search support`
+
+## Integration Seams
+
+| Direction | Sibling modules |
+|-----------|-----------------|
+| Upstream (this module imports) | none |
+| Downstream (these import this module) | HelixLLM |
+
+*Siblings* means other project-owned modules at the HelixAgent repo root. The root HelixAgent app and external systems are not listed here — the list above is intentionally scoped to module-to-module seams, because drift *between* sibling modules is where the "tests pass, product broken" class of bug most often lives. See root `CLAUDE.md` for the rules that keep these seams contract-tested.
