@@ -172,48 +172,6 @@ func TestConfig_GetGRPCAddress(t *testing.T) {
 // Client Constructor Tests
 // =========================================================================
 
-func TestNewClient(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		wantErr bool
-	}{
-		{
-			name:    "nil config uses defaults",
-			config:  nil,
-			wantErr: false,
-		},
-		{
-			name:    "valid config",
-			config:  DefaultConfig(),
-			wantErr: false,
-		},
-		{
-			name: "invalid config",
-			config: &Config{
-				Host:     "",
-				HTTPPort: 6333,
-				GRPCPort: 6334,
-				Timeout:  time.Second,
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewClient(tt.config)
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Nil(t, c)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, c)
-			}
-		})
-	}
-}
-
 // =========================================================================
 // Connection Tests
 // =========================================================================

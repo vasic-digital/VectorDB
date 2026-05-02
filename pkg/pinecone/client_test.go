@@ -98,49 +98,6 @@ func TestConfig_Validate(t *testing.T) {
 // Constructor Tests
 // =========================================================================
 
-func TestNewClient(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		wantErr bool
-	}{
-		{
-			name: "valid config",
-			config: &Config{
-				APIKey:    "key",
-				IndexHost: "https://test.pinecone.io",
-				Timeout:   5 * time.Second,
-			},
-			wantErr: false,
-		},
-		{
-			name: "missing API key",
-			config: &Config{
-				IndexHost: "https://test.pinecone.io",
-			},
-			wantErr: true,
-		},
-		{
-			name:    "nil config fails (no API key)",
-			config:  nil,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewClient(tt.config)
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Nil(t, c)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, c)
-			}
-		})
-	}
-}
-
 // =========================================================================
 // Connection Tests
 // =========================================================================

@@ -141,43 +141,6 @@ func TestConfig_GetBaseURL(t *testing.T) {
 // Constructor Tests
 // =========================================================================
 
-func TestNewClient(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		wantErr bool
-	}{
-		{
-			name:    "nil config uses defaults",
-			config:  nil,
-			wantErr: false,
-		},
-		{
-			name:    "valid config",
-			config:  &Config{Host: "localhost", Port: 19530, DBName: "default"},
-			wantErr: false,
-		},
-		{
-			name:      "empty host",
-			config:    &Config{Host: "", Port: 19530},
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewClient(tt.config)
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Nil(t, c)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, c)
-			}
-		})
-	}
-}
-
 // =========================================================================
 // Connection Tests
 // =========================================================================

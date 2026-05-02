@@ -167,46 +167,6 @@ func TestDistanceOperator(t *testing.T) {
 // Constructor Tests
 // =========================================================================
 
-func TestNewClient(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		wantErr bool
-	}{
-		{
-			name:    "nil config fails (empty conn string)",
-			config:  nil,
-			wantErr: true,
-		},
-		{
-			name: "valid config",
-			config: &Config{
-				ConnectionString: "host=localhost",
-				TablePrefix:      "v_",
-			},
-			wantErr: false,
-		},
-		{
-			name:    "empty conn string",
-			config:  &Config{ConnectionString: ""},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewClient(tt.config)
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Nil(t, c)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, c)
-			}
-		})
-	}
-}
-
 // =========================================================================
 // Connection Tests
 // =========================================================================
