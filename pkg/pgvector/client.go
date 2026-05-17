@@ -209,6 +209,16 @@ func (c *Client) Upsert(
 }
 
 // Search performs vector similarity search.
+//
+// §11.4 / CONST-050(A) — real SQL dispatch is NOT wired. Previous
+// error message was generic ("requires a live database connection")
+// regardless of connection state — discoverability bluff. Now
+// returns ErrPgvectorSearchNotWired sentinel for grep-able
+// follow-up. Real fix:
+//   sql := "SELECT id, embedding, metadata, embedding <-> $2::vector " +
+//          "AS distance FROM " + c.tableName(collection) +
+//          " ORDER BY distance LIMIT $3"
+//   rows, err := c.pool.Query(ctx, sql, query.Vector, query.Limit)
 func (c *Client) Search(
 	ctx context.Context,
 	collection string,
@@ -216,20 +226,19 @@ func (c *Client) Search(
 ) ([]client.SearchResult, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
 	if !c.connected {
 		return nil, client.ErrNotConnected
 	}
-
-	// pgvector Search requires live DB; unit tests should mock DBPool.
-	// This is a placeholder that demonstrates the SQL structure.
 	_ = c.tableName(collection)
 	_ = query
-
-	return nil, fmt.Errorf(
-		"pgvector search requires a live database connection",
-	)
+	return nil, ErrPgvectorSearchNotWired
 }
+
+// ErrPgvectorSearchNotWired is returned by Client.Search until the
+// real SQL dispatch is wired. §11.4 sentinel-error per round-22
+// audit; clearer than the previous free-form error string and
+// grep-able for follow-up work.
+var ErrPgvectorSearchNotWired = fmt.Errorf("pgvector.Search: real SQL dispatch not wired (was: generic connection-error message regardless of state — §11.4 discoverability-bluff)")
 
 // Delete removes vectors by IDs.
 func (c *Client) Delete(
@@ -266,6 +275,9 @@ func (c *Client) Delete(
 }
 
 // Get retrieves vectors by IDs.
+// §11.4 / CONST-050(A) — real SQL not wired; returns
+// ErrPgvectorGetNotWired sentinel. Real fix: SELECT id, embedding,
+// metadata FROM <table> WHERE id IN (...) using c.pool.
 func (c *Client) Get(
 	ctx context.Context,
 	collection string,
@@ -273,19 +285,19 @@ func (c *Client) Get(
 ) ([]client.Vector, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
 	if !c.connected {
 		return nil, client.ErrNotConnected
 	}
 	if len(ids) == 0 {
 		return []client.Vector{}, nil
 	}
-
-	// Requires live DB; unit tests should mock DBPool.
-	return nil, fmt.Errorf(
-		"pgvector get requires a live database connection",
-	)
+	_ = c.tableName(collection)
+	return nil, ErrPgvectorGetNotWired
 }
+
+// ErrPgvectorGetNotWired is returned by Client.Get until real SQL
+// dispatch is wired. §11.4 sentinel-error per round-22 audit.
+var ErrPgvectorGetNotWired = fmt.Errorf("pgvector.Get: real SQL dispatch not wired (was: generic connection-error message — §11.4 discoverability-bluff)")
 
 // CreateCollection creates a table for vectors.
 func (c *Client) CreateCollection(

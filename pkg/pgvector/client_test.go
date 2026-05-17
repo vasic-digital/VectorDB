@@ -470,23 +470,25 @@ func TestClient_TableName(t *testing.T) {
 // Additional Tests for Search, Get, ListCollections Coverage
 // =========================================================================
 
+// Per round-22 §11.4 fix, Search + Get now return canonical
+// ErrPgvectorSearchNotWired / ErrPgvectorGetNotWired sentinels
+// instead of free-form "live database connection" error strings.
+// Tests tightened to assert the sentinel (grep-able + ErrorIs).
 func TestClient_Search_Connected(t *testing.T) {
 	c, _ := newConnectedClient(t)
-	// Search returns error since it requires live DB
 	_, err := c.Search(context.Background(), "test", client.SearchQuery{
 		Vector: []float32{0.1, 0.2},
 		TopK:   10,
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "live database connection")
+	assert.ErrorIs(t, err, ErrPgvectorSearchNotWired)
 }
 
 func TestClient_Get_Connected(t *testing.T) {
 	c, _ := newConnectedClient(t)
-	// Get returns error since it requires live DB
 	_, err := c.Get(context.Background(), "test", []string{"v1"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "live database connection")
+	assert.ErrorIs(t, err, ErrPgvectorGetNotWired)
 }
 
 func TestClient_ListCollections_Connected(t *testing.T) {
