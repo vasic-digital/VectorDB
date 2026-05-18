@@ -2,7 +2,9 @@ package pgvector
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,33 +16,117 @@ import (
 
 // mockRow implements Row for testing.
 type mockRow struct {
-	scanErr error
+	scanErr  error
+	scanVals []any
 }
 
-func (r *mockRow) Scan(_ ...any) error {
-	return r.scanErr
+func (r *mockRow) Scan(dest ...any) error {
+	if r.scanErr != nil {
+		return r.scanErr
+	}
+	if len(r.scanVals) != len(dest) {
+		return nil
+	}
+	for i, d := range dest {
+		switch dd := d.(type) {
+		case *string:
+			if s, ok := r.scanVals[i].(string); ok {
+				*dd = s
+			}
+		case *float64:
+			if f, ok := r.scanVals[i].(float64); ok {
+				*dd = f
+			}
+		}
+	}
+	return nil
 }
+
+// mockRows implements Rows for testing.
+type mockRows struct {
+	rows    [][]any
+	idx     int
+	scanErr error
+	iterErr error
+	closed  bool
+}
+
+func (r *mockRows) Next() bool {
+	if r.idx >= len(r.rows) {
+		return false
+	}
+	r.idx++
+	return true
+}
+
+func (r *mockRows) Scan(dest ...any) error {
+	if r.scanErr != nil {
+		return r.scanErr
+	}
+	if r.idx == 0 || r.idx > len(r.rows) {
+		return errors.New("mockRows: Scan called without preceding Next")
+	}
+	row := r.rows[r.idx-1]
+	if len(row) != len(dest) {
+		return fmt.Errorf("mockRows: row width %d != dest width %d", len(row), len(dest))
+	}
+	for i, d := range dest {
+		switch dd := d.(type) {
+		case *string:
+			if s, ok := row[i].(string); ok {
+				*dd = s
+			}
+		case *float64:
+			if f, ok := row[i].(float64); ok {
+				*dd = f
+			}
+		}
+	}
+	return nil
+}
+
+func (r *mockRows) Err() error { return r.iterErr }
+func (r *mockRows) Close()     { r.closed = true }
 
 // mockPool implements DBPool for testing.
 type mockPool struct {
-	pingErr  error
-	execErr  error
-	execSQL  []string
-	closed   bool
-	queryRow *mockRow
+	pingErr   error
+	execErr   error
+	execSQL   []string
+	execArgs  [][]any
+	closed    bool
+	queryRow  *mockRow
+	queryRows *mockRows
+	queryErr  error
+	querySQL  []string
+	queryArgs [][]any
 }
 
 func (p *mockPool) Ping(_ context.Context) error {
 	return p.pingErr
 }
 
-func (p *mockPool) Exec(_ context.Context, sql string, _ ...any) error {
+func (p *mockPool) Exec(_ context.Context, sql string, args ...any) error {
 	p.execSQL = append(p.execSQL, sql)
+	p.execArgs = append(p.execArgs, args)
 	return p.execErr
 }
 
-func (p *mockPool) QueryRow(_ context.Context, sql string, _ ...any) Row {
-	p.execSQL = append(p.execSQL, sql)
+func (p *mockPool) Query(_ context.Context, sql string, args ...any) (Rows, error) {
+	p.querySQL = append(p.querySQL, sql)
+	p.queryArgs = append(p.queryArgs, args)
+	if p.queryErr != nil {
+		return nil, p.queryErr
+	}
+	if p.queryRows != nil {
+		return p.queryRows, nil
+	}
+	return &mockRows{}, nil
+}
+
+func (p *mockPool) QueryRow(_ context.Context, sql string, args ...any) Row {
+	p.querySQL = append(p.querySQL, sql)
+	p.queryArgs = append(p.queryArgs, args)
 	if p.queryRow != nil {
 		return p.queryRow
 	}
@@ -467,33 +553,180 @@ func TestClient_TableName(t *testing.T) {
 }
 
 // =========================================================================
-// Additional Tests for Search, Get, ListCollections Coverage
+// Round-37 §2.3: real SQL dispatch through DBPool
 // =========================================================================
 
-// Per round-22 §11.4 fix, Search + Get now return canonical
-// ErrPgvectorSearchNotWired / ErrPgvectorGetNotWired sentinels
-// instead of free-form "live database connection" error strings.
-// Tests tightened to assert the sentinel (grep-able + ErrorIs).
-func TestClient_Search_Connected(t *testing.T) {
+// Search wired path — pool returns one row, assert id + score + SQL composition.
+func TestClient_Search_Wired_HappyPath(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.querySQL = nil
+	pool.queryRows = &mockRows{
+		rows: [][]any{
+			{"id-a", "[0.1,0.2]", "{}", 0.25},
+			{"id-b", "[0.3,0.4]", "{}", 0.75},
+		},
+	}
+
+	results, err := c.Search(context.Background(), "test_coll", client.SearchQuery{
+		Vector: []float32{0.1, 0.2},
+		TopK:   2,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.Equal(t, "id-a", results[0].ID)
+	// cosine distance 0.25 → score 0.75 (1 - distance).
+	assert.InDelta(t, 0.75, results[0].Score, 1e-5)
+	assert.Equal(t, "id-b", results[1].ID)
+	assert.InDelta(t, 0.25, results[1].Score, 1e-5)
+
+	// Assert SQL composition: contains pgvector cosine-distance operator + params.
+	require.Len(t, pool.querySQL, 1)
+	assert.Contains(t, pool.querySQL[0], "<=>")
+	assert.Contains(t, pool.querySQL[0], "vdb_test_coll")
+	assert.Contains(t, pool.querySQL[0], "$1")
+	assert.Contains(t, pool.querySQL[0], "$2")
+	assert.Contains(t, strings.ToUpper(pool.querySQL[0]), "ORDER BY DISTANCE")
+	assert.Contains(t, strings.ToUpper(pool.querySQL[0]), "LIMIT $2")
+	// Assert iterator closed.
+	assert.True(t, pool.queryRows.closed, "Rows.Close() must be called")
+}
+
+// Search nil-pool path — preserves round-22 sentinel contract.
+func TestClient_Search_NilPool_SentinelPreserved(t *testing.T) {
 	c, _ := newConnectedClient(t)
+	// Drop pool out from under the client to exercise the defensive branch.
+	c.mu.Lock()
+	c.pool = nil
+	c.mu.Unlock()
+
 	_, err := c.Search(context.Background(), "test", client.SearchQuery{
 		Vector: []float32{0.1, 0.2},
-		TopK:   10,
+		TopK:   5,
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPgvectorSearchNotWired)
 }
 
-func TestClient_Get_Connected(t *testing.T) {
+// Search invalid query — surfaces validation error.
+func TestClient_Search_InvalidQuery(t *testing.T) {
 	c, _ := newConnectedClient(t)
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{}, // invalid
+		TopK:   5,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid search query")
+}
+
+// Search pool.Query error — surfaces wrapped error.
+func TestClient_Search_QueryError(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.queryErr = errors.New("connection lost")
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1},
+		TopK:   5,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pgvector search query failed")
+	assert.Contains(t, err.Error(), "connection lost")
+}
+
+// Search rows.Scan error — surfaces wrapped error.
+func TestClient_Search_ScanError(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.queryRows = &mockRows{
+		rows:    [][]any{{"id-a", "[]", "{}", 0.1}},
+		scanErr: errors.New("scan failed"),
+	}
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1},
+		TopK:   5,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scan failed")
+}
+
+// Search rows.Err iteration error.
+func TestClient_Search_IterErr(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.queryRows = &mockRows{
+		rows:    [][]any{},
+		iterErr: errors.New("iteration failure"),
+	}
+	_, err := c.Search(context.Background(), "test", client.SearchQuery{
+		Vector: []float32{0.1},
+		TopK:   5,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "iteration failure")
+}
+
+// Get wired path — pool returns row, assert vector list + SQL composition.
+func TestClient_Get_Wired_HappyPath(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.querySQL = nil
+	pool.queryRow = &mockRow{
+		scanVals: []any{"v1", "[0.1,0.2]", "{}"},
+	}
+	vectors, err := c.Get(context.Background(), "test_coll", []string{"v1"})
+	require.NoError(t, err)
+	require.Len(t, vectors, 1)
+	assert.Equal(t, "v1", vectors[0].ID)
+	require.Len(t, pool.querySQL, 1)
+	assert.Contains(t, pool.querySQL[0], "vdb_test_coll")
+	assert.Contains(t, pool.querySQL[0], "WHERE id = $1")
+}
+
+// Get nil-pool path — preserves round-22 sentinel contract.
+func TestClient_Get_NilPool_SentinelPreserved(t *testing.T) {
+	c, _ := newConnectedClient(t)
+	c.mu.Lock()
+	c.pool = nil
+	c.mu.Unlock()
+
 	_, err := c.Get(context.Background(), "test", []string{"v1"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPgvectorGetNotWired)
 }
 
+// Get → ErrVectorNotFound when QueryRow scan returns ErrNoRowsInResultSet.
+func TestClient_Get_NotFound_Sentinel(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.queryRow = &mockRow{
+		scanErr: ErrNoRowsInResultSet,
+	}
+	_, err := c.Get(context.Background(), "test", []string{"missing-id"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrVectorNotFound,
+		"expected ErrVectorNotFound when pool QueryRow returns no rows")
+	// Sanity: distinct from the not-wired sentinel.
+	assert.NotErrorIs(t, err, ErrPgvectorGetNotWired)
+}
+
+// Get → wrapped scan error for non-no-rows failures.
+func TestClient_Get_ScanError(t *testing.T) {
+	c, pool := newConnectedClient(t)
+	pool.queryRow = &mockRow{
+		scanErr: errors.New("type mismatch"),
+	}
+	_, err := c.Get(context.Background(), "test", []string{"v1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "type mismatch")
+	assert.NotErrorIs(t, err, ErrVectorNotFound)
+}
+
+// Paired-mutation guard: assert that the sentinels are distinct identities.
+// A regression that aliased ErrVectorNotFound to ErrPgvectorGetNotWired
+// would make NotErrorIs assertions in the wired tests above false-positive.
+func TestSentinels_DistinctIdentities(t *testing.T) {
+	assert.NotSame(t, &ErrVectorNotFound, &ErrPgvectorGetNotWired)
+	assert.NotSame(t, &ErrPgvectorSearchNotWired, &ErrPgvectorGetNotWired)
+	assert.False(t, errors.Is(ErrVectorNotFound, ErrPgvectorGetNotWired))
+	assert.False(t, errors.Is(ErrPgvectorGetNotWired, ErrVectorNotFound))
+}
+
 func TestClient_ListCollections_Connected(t *testing.T) {
 	c, _ := newConnectedClient(t)
-	// ListCollections returns error since it requires live DB
 	_, err := c.ListCollections(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live database connection")

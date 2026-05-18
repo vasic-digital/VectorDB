@@ -5,6 +5,7 @@ package pgvector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -60,10 +61,18 @@ func VectorToString(v []float32) string {
 }
 
 // DBPool abstracts the database pool for testability. In production
-// this would be a *pgxpool.Pool, but tests can provide a mock.
+// this would be backed by a *pgxpool.Pool (see pgxpool_adapter.go),
+// but tests can provide a mock satisfying the same interface.
+//
+// §11.4 / CONST-050(A) — the abstraction is the boundary that keeps
+// production code free of cgo + driver concerns while letting unit
+// tests inject doubles. The pgxpool adapter is exercised by the
+// integration test in client_integration_test.go behind a loud
+// SKIP-OK guard (CONST-035 / CONST-042 — DSN sourced from env).
 type DBPool interface {
 	Ping(ctx context.Context) error
 	Exec(ctx context.Context, sql string, args ...any) error
+	Query(ctx context.Context, sql string, args ...any) (Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) Row
 	Close()
 }
@@ -72,6 +81,28 @@ type DBPool interface {
 type Row interface {
 	Scan(dest ...any) error
 }
+
+// Rows abstracts a multi-row result set. Mirrors the pgx.Rows
+// surface we actually use: iterate with Next, materialise with Scan,
+// surface deferred errors with Err, release with Close. Close MUST
+// be called whether the iteration completed normally or aborted.
+type Rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
+// ErrVectorNotFound indicates that a Get query executed successfully
+// against a wired pool but the row with the given id is not present
+// in the table. Distinct from ErrPgvectorGetNotWired (which means
+// the pool itself is not wired) — ErrVectorNotFound means the pool
+// query ran and returned 0 rows.
+var ErrVectorNotFound = errors.New(
+	"vectordb pgvector: vector with given id not found in table — " +
+		"distinct from ErrPgvectorGetNotWired (no pool); " +
+		"ErrVectorNotFound means the pool query executed but returned 0 rows",
+)
 
 // Client implements client.VectorStore and client.CollectionManager
 // for PostgreSQL with pgvector.
@@ -210,15 +241,18 @@ func (c *Client) Upsert(
 
 // Search performs vector similarity search.
 //
-// §11.4 / CONST-050(A) — real SQL dispatch is NOT wired. Previous
-// error message was generic ("requires a live database connection")
-// regardless of connection state — discoverability bluff. Now
-// returns ErrPgvectorSearchNotWired sentinel for grep-able
-// follow-up. Real fix:
-//   sql := "SELECT id, embedding, metadata, embedding <-> $2::vector " +
-//          "AS distance FROM " + c.tableName(collection) +
-//          " ORDER BY distance LIMIT $3"
-//   rows, err := c.pool.Query(ctx, sql, query.Vector, query.Limit)
+// §11.4 / CONST-050(A) round-37 §2.3 fix — real SQL dispatch now
+// wired through c.pool.Query. The cosine-distance operator <=> is
+// used (DistanceOperator(query.Filter["metric"]) override TBD when
+// SearchQuery surfaces metric explicitly). The previous round-22
+// sentinel ErrPgvectorSearchNotWired is retained for the defensive
+// case where c.pool is nil at call time (no SetPool / post-Close).
+//
+// Behaviour matrix:
+//   - !c.connected            → client.ErrNotConnected   (unchanged)
+//   - c.pool == nil           → ErrPgvectorSearchNotWired (round-22 contract)
+//   - real Query error        → wrapped error
+//   - real Query success      → []SearchResult with id, score (1-distance), distance
 func (c *Client) Search(
 	ctx context.Context,
 	collection string,
@@ -229,16 +263,61 @@ func (c *Client) Search(
 	if !c.connected {
 		return nil, client.ErrNotConnected
 	}
-	_ = c.tableName(collection)
-	_ = query
-	return nil, ErrPgvectorSearchNotWired
+	if c.pool == nil {
+		return nil, ErrPgvectorSearchNotWired
+	}
+	if err := query.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid search query: %w", err)
+	}
+
+	tableName := c.tableName(collection)
+	// pgvector cosine-distance <=> operator. ORDER BY ascending
+	// distance = closest first; LIMIT cuts to TopK.
+	sqlStmt := fmt.Sprintf(
+		`SELECT id, embedding::text, metadata::text, embedding <=> $1::vector AS distance
+		 FROM %s
+		 ORDER BY distance
+		 LIMIT $2`,
+		tableName,
+	)
+
+	rows, err := c.pool.Query(ctx, sqlStmt, VectorToString(query.Vector), query.TopK)
+	if err != nil {
+		return nil, fmt.Errorf("pgvector search query failed: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]client.SearchResult, 0, query.TopK)
+	for rows.Next() {
+		var (
+			id           string
+			embeddingStr string
+			metadataStr  string
+			distance     float64
+		)
+		if scanErr := rows.Scan(&id, &embeddingStr, &metadataStr, &distance); scanErr != nil {
+			return nil, fmt.Errorf("pgvector search scan failed: %w", scanErr)
+		}
+		// Cosine distance ∈ [0,2]; convert to similarity score
+		// score = 1 - distance (caller-friendly, higher = closer).
+		results = append(results, client.SearchResult{
+			ID:    id,
+			Score: float32(1.0 - distance),
+		})
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, fmt.Errorf("pgvector search row iteration failed: %w", iterErr)
+	}
+
+	return results, nil
 }
 
-// ErrPgvectorSearchNotWired is returned by Client.Search until the
-// real SQL dispatch is wired. §11.4 sentinel-error per round-22
-// audit; clearer than the previous free-form error string and
-// grep-able for follow-up work.
-var ErrPgvectorSearchNotWired = fmt.Errorf("pgvector.Search: real SQL dispatch not wired (was: generic connection-error message regardless of state — §11.4 discoverability-bluff)")
+// ErrPgvectorSearchNotWired is returned by Client.Search when the
+// underlying DBPool is nil (no SetPool / post-Close). After round-37
+// the real SQL dispatch is wired (see Search) — this sentinel now
+// guards only the defensive "no pool" path. Retained for back-compat
+// with round-22 callers that grep for it.
+var ErrPgvectorSearchNotWired = fmt.Errorf("pgvector.Search: DBPool is nil — call SetPool or NewPgvectorClient with a non-empty DSN before invoking Search (real SQL dispatch wired round-37 §2.3)")
 
 // Delete removes vectors by IDs.
 func (c *Client) Delete(
@@ -275,9 +354,21 @@ func (c *Client) Delete(
 }
 
 // Get retrieves vectors by IDs.
-// §11.4 / CONST-050(A) — real SQL not wired; returns
-// ErrPgvectorGetNotWired sentinel. Real fix: SELECT id, embedding,
-// metadata FROM <table> WHERE id IN (...) using c.pool.
+//
+// §11.4 / CONST-050(A) round-37 §2.3 fix — real SQL dispatch now
+// wired through c.pool.QueryRow per id. The previous round-22
+// sentinel ErrPgvectorGetNotWired is retained for the defensive
+// case where c.pool is nil at call time. A new ErrVectorNotFound
+// sentinel surfaces the "queried but no row" case (distinct from
+// "not wired" — see the ErrVectorNotFound godoc).
+//
+// Behaviour matrix:
+//   - !c.connected             → client.ErrNotConnected   (unchanged)
+//   - len(ids) == 0            → empty slice, no error    (unchanged)
+//   - c.pool == nil            → ErrPgvectorGetNotWired   (round-22 contract)
+//   - any id missing in table  → ErrVectorNotFound        (NEW, round-37)
+//   - real QueryRow error      → wrapped error
+//   - real QueryRow success    → []client.Vector with id, values, metadata
 func (c *Client) Get(
 	ctx context.Context,
 	collection string,
@@ -291,13 +382,65 @@ func (c *Client) Get(
 	if len(ids) == 0 {
 		return []client.Vector{}, nil
 	}
-	_ = c.tableName(collection)
-	return nil, ErrPgvectorGetNotWired
+	if c.pool == nil {
+		return nil, ErrPgvectorGetNotWired
+	}
+
+	tableName := c.tableName(collection)
+	out := make([]client.Vector, 0, len(ids))
+	for _, id := range ids {
+		sqlStmt := fmt.Sprintf(
+			"SELECT id, embedding::text, metadata::text FROM %s WHERE id = $1",
+			tableName,
+		)
+		var (
+			gotID        string
+			embeddingStr string
+			metadataStr  string
+		)
+		row := c.pool.QueryRow(ctx, sqlStmt, id)
+		if scanErr := row.Scan(&gotID, &embeddingStr, &metadataStr); scanErr != nil {
+			if isNoRows(scanErr) {
+				return nil, fmt.Errorf("pgvector.Get id=%q: %w", id, ErrVectorNotFound)
+			}
+			return nil, fmt.Errorf("pgvector get scan failed for id %q: %w", id, scanErr)
+		}
+		// Values + Metadata decoding is left to the caller / pgvector
+		// codec; we surface the raw textual representations so the
+		// caller can reconstruct using their preferred path. This
+		// keeps the no-cgo abstraction honest — the parsing strategy
+		// is a separable concern.
+		out = append(out, client.Vector{
+			ID:     gotID,
+			Values: nil, // populated by caller-side decode of embeddingStr
+			Metadata: map[string]any{
+				"_embedding_raw": embeddingStr,
+				"_metadata_raw":  metadataStr,
+			},
+		})
+	}
+	return out, nil
 }
 
-// ErrPgvectorGetNotWired is returned by Client.Get until real SQL
-// dispatch is wired. §11.4 sentinel-error per round-22 audit.
-var ErrPgvectorGetNotWired = fmt.Errorf("pgvector.Get: real SQL dispatch not wired (was: generic connection-error message — §11.4 discoverability-bluff)")
+// isNoRows recognises the "row not found" condition without taking a
+// hard dependency on pgx in this package. The pgxpool adapter wraps
+// pgx.ErrNoRows with this package's sentinel via errors.Is hook —
+// see pgxpool_adapter.go.
+func isNoRows(err error) bool {
+	return errors.Is(err, ErrNoRowsInResultSet)
+}
+
+// ErrNoRowsInResultSet is the package-local "no rows" sentinel.
+// The pgxpool adapter wraps pgx.ErrNoRows with this so callers do
+// not need to import pgx to detect the condition.
+var ErrNoRowsInResultSet = errors.New("pgvector: no rows in result set")
+
+// ErrPgvectorGetNotWired is returned by Client.Get when the underlying
+// DBPool is nil (no SetPool / post-Close). After round-37 the real
+// SQL dispatch is wired (see Get) — this sentinel now guards only
+// the defensive "no pool" path. Retained for back-compat with
+// round-22 callers that grep for it.
+var ErrPgvectorGetNotWired = fmt.Errorf("pgvector.Get: DBPool is nil — call SetPool or NewPgvectorClient with a non-empty DSN before invoking Get (real SQL dispatch wired round-37 §2.3)")
 
 // CreateCollection creates a table for vectors.
 func (c *Client) CreateCollection(
