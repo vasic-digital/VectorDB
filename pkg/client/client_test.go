@@ -38,7 +38,7 @@ func TestVector_Validate(t *testing.T) {
 				Values: []float32{},
 			},
 			wantErr:   true,
-			errSubstr: "values must not be empty",
+			errSubstr: "vectordb_validation_vector_values_empty",
 		},
 		{
 			name: "nil values",
@@ -46,7 +46,7 @@ func TestVector_Validate(t *testing.T) {
 				ID: "v4",
 			},
 			wantErr:   true,
-			errSubstr: "values must not be empty",
+			errSubstr: "vectordb_validation_vector_values_empty",
 		},
 	}
 
@@ -95,7 +95,7 @@ func TestSearchQuery_Validate(t *testing.T) {
 				TopK:   10,
 			},
 			wantErr:   true,
-			errSubstr: "query vector must not be empty",
+			errSubstr: "vectordb_validation_query_vector_empty",
 		},
 		{
 			name: "nil vector",
@@ -103,7 +103,7 @@ func TestSearchQuery_Validate(t *testing.T) {
 				TopK: 10,
 			},
 			wantErr:   true,
-			errSubstr: "query vector must not be empty",
+			errSubstr: "vectordb_validation_query_vector_empty",
 		},
 		{
 			name: "zero top_k",
@@ -112,7 +112,7 @@ func TestSearchQuery_Validate(t *testing.T) {
 				TopK:   0,
 			},
 			wantErr:   true,
-			errSubstr: "top_k must be positive",
+			errSubstr: "vectordb_validation_topk_positive",
 		},
 		{
 			name: "negative top_k",
@@ -121,7 +121,7 @@ func TestSearchQuery_Validate(t *testing.T) {
 				TopK:   -1,
 			},
 			wantErr:   true,
-			errSubstr: "top_k must be positive",
+			errSubstr: "vectordb_validation_topk_positive",
 		},
 	}
 
@@ -187,7 +187,7 @@ func TestCollectionConfig_Validate(t *testing.T) {
 				Metric:    DistanceCosine,
 			},
 			wantErr:   true,
-			errSubstr: "collection name is required",
+			errSubstr: "vectordb_validation_collection_name_required",
 		},
 		{
 			name: "zero dimension",
@@ -196,7 +196,7 @@ func TestCollectionConfig_Validate(t *testing.T) {
 				Metric: DistanceCosine,
 			},
 			wantErr:   true,
-			errSubstr: "dimension must be at least 1",
+			errSubstr: "vectordb_validation_dimension_min",
 		},
 		{
 			name: "negative dimension",
@@ -206,7 +206,7 @@ func TestCollectionConfig_Validate(t *testing.T) {
 				Metric:    DistanceCosine,
 			},
 			wantErr:   true,
-			errSubstr: "dimension must be at least 1",
+			errSubstr: "vectordb_validation_dimension_min",
 		},
 		{
 			name: "invalid metric",

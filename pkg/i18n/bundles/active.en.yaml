@@ -1,0 +1,18 @@
+# VectorDB i18n bundle — English (default).
+#
+# Keys are prefixed `vectordb_` to avoid collision with sibling submodule
+# catalogues that a consuming project (e.g. HelixCode) may merge into a
+# single bundle store. Per CONST-046 the consuming project's project-side
+# translator is the authority that fans out locale overrides; this
+# bundle is the canonical English source.
+#
+# Round-120 §11.4 — kickoff scope: client validation error messages on
+# the public VectorStore / CollectionManager surface. Subsequent rounds
+# widen coverage to pgvector / milvus / pinecone / qdrant adapter error
+# surfaces + ErrNotConnected sentinel.
+
+vectordb_validation_vector_values_empty: "vector values must not be empty"
+vectordb_validation_query_vector_empty: "query vector must not be empty"
+vectordb_validation_topk_positive: "top_k must be positive"
+vectordb_validation_collection_name_required: "collection name is required"
+vectordb_validation_dimension_min: "dimension must be at least 1"

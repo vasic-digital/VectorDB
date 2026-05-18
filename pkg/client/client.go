@@ -3,8 +3,38 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"digital.vasic.vectordb/pkg/i18n"
 )
+
+// translator is the package-scoped Translator used to render the
+// validation error keys defined in pkg/i18n/bundles/active.en.yaml.
+// Defaults to NoopTranslator (returns key verbatim) per CONST-046 +
+// CONST-051(B): the VectorDB submodule is project-not-aware and never
+// reaches into a parent project for its catalogue. Consuming projects
+// wire a real translator via SetTranslator.
+var translator i18n.Translator = i18n.NoopTranslator{}
+
+// SetTranslator rewires the package-scoped translator used by
+// Validate methods on Vector, SearchQuery, and CollectionConfig.
+// Calling with nil restores the NoopTranslator default. Safe to call
+// at process init; not safe to call concurrently with Validate.
+func SetTranslator(t i18n.Translator) {
+	if t == nil {
+		translator = i18n.NoopTranslator{}
+		return
+	}
+	translator = t
+}
+
+// Translator returns the currently installed Translator. Exposed for
+// call-site tests that need to assert SetTranslator wiring without
+// reaching into package internals.
+func Translator() i18n.Translator {
+	return translator
+}
 
 // VectorStore defines the core operations for a vector database.
 type VectorStore interface {
@@ -50,10 +80,13 @@ type Vector struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// Validate checks that the vector has valid fields.
+// Validate checks that the vector has valid fields. Validation error
+// messages flow through the package-scoped i18n.Translator per
+// CONST-046 — consuming projects can rewire SetTranslator to fan out
+// locale overrides without touching this submodule.
 func (v *Vector) Validate() error {
 	if len(v.Values) == 0 {
-		return fmt.Errorf("vector values must not be empty")
+		return errors.New(translator.T("vectordb_validation_vector_values_empty", nil))
 	}
 	return nil
 }
@@ -74,13 +107,15 @@ type SearchQuery struct {
 	MinScore float64        `json:"min_score,omitempty"`
 }
 
-// Validate checks that the search query has valid fields.
+// Validate checks that the search query has valid fields. Validation
+// error messages flow through the package-scoped i18n.Translator per
+// CONST-046.
 func (q *SearchQuery) Validate() error {
 	if len(q.Vector) == 0 {
-		return fmt.Errorf("query vector must not be empty")
+		return errors.New(translator.T("vectordb_validation_query_vector_empty", nil))
 	}
 	if q.TopK <= 0 {
-		return fmt.Errorf("top_k must be positive")
+		return errors.New(translator.T("vectordb_validation_topk_positive", nil))
 	}
 	return nil
 }
@@ -105,12 +140,14 @@ type CollectionConfig struct {
 }
 
 // Validate checks that the collection config has valid fields.
+// Validation error messages flow through the package-scoped
+// i18n.Translator per CONST-046.
 func (c *CollectionConfig) Validate() error {
 	if c.Name == "" {
-		return fmt.Errorf("collection name is required")
+		return errors.New(translator.T("vectordb_validation_collection_name_required", nil))
 	}
 	if c.Dimension < 1 {
-		return fmt.Errorf("dimension must be at least 1")
+		return errors.New(translator.T("vectordb_validation_dimension_min", nil))
 	}
 	validMetrics := map[DistanceMetric]bool{
 		DistanceCosine:     true,
@@ -118,11 +155,16 @@ func (c *CollectionConfig) Validate() error {
 		DistanceEuclidean:  true,
 	}
 	if c.Metric != "" && !validMetrics[c.Metric] {
+		// Distance metric value is data, not a localised template — it
+		// is echoed verbatim alongside the (legacy) English fragment.
+		// Round-121 will lift this surface through the translator with
+		// a templated key.
 		return fmt.Errorf("invalid distance metric: %s", c.Metric)
 	}
 	return nil
 }
 
 // ErrNotConnected is returned when an operation is attempted
-// on a client that is not connected.
-var ErrNotConnected = fmt.Errorf("not connected to vector database")
+// on a client that is not connected. Round-121 will route this sentinel
+// through the translator while keeping errors.Is identity stable.
+var ErrNotConnected = errors.New("not connected to vector database")
