@@ -1,29 +1,79 @@
-# Binaries
+# .gitignore — VectorDB (CONST-053 compliant)
+#
+# Forbidden-from-version-control classes per CONST-053 / Constitution
+# §11.4.30. Anti-bluff invariant: a .gitignore line alone is not
+# sufficient — no file matching these patterns may be CURRENTLY
+# TRACKED. Pre-commit `git status` + `git diff --staged` inspection
+# is mandatory.
+
+# 1. Build artefacts
+/bin/
+/build/
+/dist/
+/out/
+target/
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+*.a
+*.o
+*.class
+*.pyc
+mutbin
+challenges/runner/runner
+challenges/runner/vectordb-runner
 
-# Test binary
-*.test
+# 2. Cache files
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+.next/
+.cache/
+.gradle/
+.terraform/
+.gopls/
 
-# Output of go coverage
-*.out
-
-# IDE
-.idea/
-.vscode/
+# 3. Temp files
+*.tmp
 *.swp
 *.swo
-
-# OS
+*~
 .DS_Store
 Thumbs.db
+*.orig
+*.rej
 
-# Go workspace
+# 4. Sensitive-data files (CONST-042 / CONST-053 intersection)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+id_rsa*
+id_ed25519*
+.netrc
+secrets/
+api_keys.sh
+
+# 5. Generated reports / logs
+*.log
+*.test
+*.out
+coverage.out
+coverage.html
+htmlcov/
+
+# 6. OS / IDE personal state
+.idea/
+.history/
+.vscode/
+
+# 7. Go workspace + vendor (regeneratable)
 go.work
 go.work.sum
-
-# Vendor
 vendor/

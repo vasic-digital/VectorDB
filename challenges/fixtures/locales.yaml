@@ -1,0 +1,31 @@
+# Round-287 5-locale CONST-046 fixture for the digital.vasic.vectordb
+# Challenge runner. The runner does NOT load this file at run time —
+# the locale lines are encoded in supportedLocales() in
+# challenges/runner/main.go so the binary stays self-contained. This
+# YAML is the human-readable source of truth that the runner's locale
+# functions are derived from; whenever a locale line changes in the
+# runner, this file MUST be updated in the SAME commit to keep the two
+# in sync. Drift is a CONST-046 violation.
+#
+# Schema:
+#   locales:
+#     - tag: <BCP-47-ish short tag the runner prints inside [tag]>
+#       template: <human-readable summary line with %d backendCount %d validationGateCount placeholders>
+#       canonical_token: <substring the runner asserts is present>
+
+locales:
+  - tag: en
+    template: "vectordb: %d backends exercised, %d validation gates passed"
+    canonical_token: "vectordb:"
+  - tag: sr
+    template: "vectordb: %d pozadinskih sistema izvršeno, %d validacionih kapija prošlo"
+    canonical_token: "vectordb:"
+  - tag: ja
+    template: "vectordb: %d バックエンドを実行、%d 検証ゲートが通過"
+    canonical_token: "vectordb:"
+  - tag: es
+    template: "vectordb: %d backends ejercidos, %d puertas de validación aprobadas"
+    canonical_token: "vectordb:"
+  - tag: de
+    template: "vectordb: %d Backends ausgeübt, %d Validierungs-Gates bestanden"
+    canonical_token: "vectordb:"
