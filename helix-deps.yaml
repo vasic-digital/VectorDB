@@ -1,0 +1,8 @@
+# helix-deps.yaml — vector_db Submodule-Dependency-Manifest (HelixConstitution §11.4.31)
+# Catalogue-Check (§11.4.74): inspected go.mod; own-org deps: none (genuine leaf — no cross-module digital.vasic.*/dev.helix.agent/* require, no own-org replace directive).
+schema_version: 1
+deps: []
+transitive_handling:
+  recursive: true
+  conflict_resolution: operator-required
+language_specific_subtree: false
